@@ -1,5 +1,4 @@
-import 'dart:io';
-
+import 'package:charcode/charcode.dart';
 
 /// A proof of concept rewriter for simple XML like expressions.
 ///
@@ -16,315 +15,278 @@ import 'dart:io';
 ///      new MyElement(bar=fizz, bazz=2)([
 ///        new Div()(["Foo"]),
 ///      ]);
-/// 
+///
 ///      new Dx('''
 ///        <div>
-///           ${"This is a text node""}
+///           "This is a text node"
+///           "${localTextNode}"
 ///        </div>
 ///      '''); =>
-/// 
-///      div()([text(${"this is a text node"})])
 ///
-///      new Dx('<my-element></my-element>');
+///      div()([text("this is a text node"), text(localTextNode)])
 ///
-///      Error! This isn't real xml
+///      new Dx('<my-element></my-element>'); =>
 ///
+///      new Element('my-element')();
 ///
-
-enum State {
-  Neutral,
-  OpenNode,
-  CloseNode,
-  Name,
-  Args,
-  ArgName,
-  Text,
-}
-
 class Parser {
-  const Parser();
+  List<Node> _nodes;
+  List<int> _runes;
+  int _index;
+
+  Parser();
+
+  int get peek => _runes[_index];
 
   String parse(String source) {
-    var state = State.Neutral;
-    var nodes = <Node>[];
-    var runes = source.runes.toList();
-    var index = 0;
-
-    while (index < runes.length) {
-      var char = runes[index];
-      switch (state) {
-        case State.Neutral:
-          if (index >= runes.length) {
-            break;
-          }
-          while (_isSpace(char)) {
-            index++;
-            if (index >= runes.length) {
-              break;
-            }
-            char = runes[index];
-          }
-          if (index >= runes.length) {
-            break;
-          }
-          // `<`
-          if (char != 0x3C) {
-            state = State.Text;
-            break;
-          }
-          index++;
-          char = runes[index];
-          if (char == 0x2F) {
-            index++;
-            state = State.CloseNode;
-          } else {
-            state = State.OpenNode;
-          }
+    _nodes = <Node>[];
+    _runes = source.runes.toList();
+    _index = 0;
+    consumeWhitespace();
+    while (true) {
+      consumeWhitespace();
+      if (isDone()) {
+        break;
+      }
+      switch (peek) {
+        case $open_angle:
+          consume();
+          parseElement();
           break;
-        case State.OpenNode:
-          // `<`
-          nodes.add(new CtrNode());
-          state = State.Name;
+        case $dollar:
+          parseFragment();
           break;
-        case State.Name:
-          var buffer = <int>[];
-          if (_isLetter(char)) {
-            buffer.add(char);
-            index++;
-          } else {
-            throw new Exception(
-                'Element name must be valid identifer. found $char - $state : $index');
-          }
-          char = runes[index];
-          while (_isLetter(char) || _isNum(char)) {
-            buffer.add(char);
-            index++;
-            char = runes[index];
-          }
-          nodes.last.name = new String.fromCharCodes(buffer);
-          while (_isSpace(char)) {
-            index++;
-            char = runes[index];
-          }
-          // `>`
-          if (char == 0x3E) {
-            index++;
-            state = State.Neutral;
-          } else {
-            state = State.Args;
-          }
+        case $double_quote:
+          parseText();
           break;
-        case State.CloseNode:
-          while (_isSpace(char)) {
-            index++;
-            char = runes[index];
-          }
-          var buffer = <int>[];
-          if (_isLetter(char)) {
-            buffer.add(char);
-            index++;
-          } else {
-            throw new Exception(
-                'Element name must be valid identifer. found $char - $state : $index');
-          }
-          char = runes[index];
-          while (_isLetter(char) || _isNum(char)) {
-            buffer.add(char);
-            index++;
-            char = runes[index];
-          }
-          var name = new String.fromCharCodes(buffer);
-          var parent = nodes.lastWhere((node) => node.name == name);
-          Node removed;
-          do {
-            removed = nodes.removeLast();
-            if (parent != removed) {
-              parent.children.add(removed);
-            } else {
-              nodes.add(parent);
-            }
-          } while (removed != parent);
-          state = State.Neutral;
-          index++;
-          break;
-        case State.Args:
-          while (_isSpace(char)) {
-            index++;
-            char = runes[index];
-          }
-          if (char == 0x3E) {
-            index++;
-            state = State.Neutral;
-          } else {
-            state = State.ArgName;
-            break;
-          }
-          break;
-        case State.ArgName:
-          var buffer = <int>[];
-          if (_isLetter(char)) {
-            buffer.add(char);
-            index++;
-          } else {
-            throw new Exception(
-                'Element name must be valid identifer. found $char - $state : $index');
-          }
-          char = runes[index];
-          while (_isLetter(char) || _isNum(char)) {
-            buffer.add(char);
-            index++;
-            char = runes[index];
-          }
-          var name = new String.fromCharCodes(buffer);
-          buffer.clear();
-          while (_isSpace(char)) {
-            index++;
-            char = runes[index];
-          }
-          if (!char == 0x3D) {
-            throw new Exception('Expected attribute to equal something');
-          }
-          index++;
-          char = runes[index];
-          while (_isSpace(char)) {
-            index++;
-            char = runes[index];
-          }
-          // expecting {literal} or ${literal}
-          if (char == 0x24) {
-            index++;
-            char = runes[index];
-          }
-          if (char != 0x7B) {
-            throw new Exception(
-                'Values must be in \${\} or \{\}. found ${new String.fromCharCode(char)} : $state : $index');
-          }
-          index++;
-          char = runes[index];
-          while (char != 0x7D) {
-            buffer.add(char);
-            index++;
-            char = runes[index];
-          }
-          index++;
-          var value = new String.fromCharCodes(buffer);
-          nodes.last.arguments.add(new CtrArg()
-            ..name = name
-            ..value = value);
-          state = State.Args;
-          break;
-        case State.Text:
-          // expecting {literal} or ${literal}
-          while (_isSpace(char)) {
-            index++;
-            char = runes[index];
-          }
-          var buffer = <int>[];
-          if (char == 0x24) {
-            index++;
-            char = runes[index];
-          }
-          if (char != 0x7B) {
-            throw new Exception(
-                'Values must be in \${\} or \{\}. found ${new String.fromCharCode(char)} : $state : $index');
-          }
-          index++;
-          char = runes[index];
-          while (char != 0x7D) {
-            buffer.add(char);
-            index++;
-            char = runes[index];
-          }
-          index++;
-          var value = new String.fromCharCodes(buffer);
-          nodes.add(new TextNode()..value = value);
-          state = State.Neutral;
-          break;
+        default:
+          throw new Exception('Illegal char: ${new String.fromCharCode(peek)}');
       }
     }
-    return '${nodes.single};';
+    return ' ${_nodes.single}';
   }
 
-  bool _isSpace(int char) => char == 0x20 || char == 0x9 || char == 0xA;
+  /// Parses "......" into a text node.
+  void parseText() {
+    final buffer = <int>[$double_quote];
+    expect($double_quote);
+    while (peek != $double_quote) {
+      buffer.add(peek);
+      consume();
+    }
+    expect($double_quote);
+    buffer.add($double_quote);
+    _nodes.add(new Text()..value = new String.fromCharCodes(buffer));
+  }
 
-  bool _isLetter(int char) =>
+  /// Parses ${...} into a fragment which is assumed to be either
+  /// a node or a list of nodes.
+  void parseFragment() {
+    final buffer = <int>[];
+    expect($dollar);
+    expect($open_brace);
+    while (peek != $close_brace) {
+      buffer.add(peek);
+      consume();
+    }
+    expect($close_brace);
+    _nodes.add(new Fragment()..value = new String.fromCharCodes(buffer));
+  }
+
+  /// Parsers the start of `<` or `</`
+  void parseElement() {
+    if (peek == $slash) {
+      consume();
+      parseClosingNode();
+    } else {
+      parseOpeningNode();
+    }
+  }
+
+  /// Parses the name of an opening element `<my-element` or `<MyClass`
+  void parseOpeningNode() {
+    consumeWhitespace();
+    if (isLowerCase(peek)) {
+      _nodes.add(new Constructor()
+        ..name = parseElementName()
+        ..isElement = true);
+    } else {
+      _nodes.add(new Constructor()
+        ..name = parseClassName()
+        ..isElement = false);
+    }
+    parseArguments();
+  }
+
+  /// Parses the attributes of an xml node into [Argument]
+  void parseArguments() {
+    while (true) {
+      consumeWhitespace();
+      if (peek == $slash) {
+        consume();
+        expect($close_angle);
+        break;
+      } else if (peek == $close_angle) {
+        consume();
+        break;
+      } else {
+        // TODO: replace this with a more accurate procedure that handles spaces.
+        final name = <int>[];
+        final value = <int>[];
+        while (peek != $equal) {
+          name.add(peek);
+          consume();
+        }
+        expect($equal);
+        expect($dollar);
+        expect($open_brace);
+        while (peek != $close_brace) {
+          value.add(peek);
+          consume();
+        }
+        expect($close_brace);
+        (_nodes.last as Constructor).arguments.add(new Argument()
+          ..name = new String.fromCharCodes(name)
+          ..value = new String.fromCharCodes(value));
+      }
+    }
+  }
+
+  void parseClosingNode() {
+    final name = isLowerCase(peek) ? parseElementName() : parseClassName();
+    consumeWhitespace();
+    expect($close_angle);
+    final parent = _nodes.lastWhere((node) => node.name == name);
+    Node removed;
+    do {
+      removed = _nodes.removeLast();
+      if (parent != removed) {
+        parent.children.add(removed);
+      } else {
+        _nodes.add(parent);
+      }
+    } while (removed != parent);
+  }
+
+  /// Parses the name of a widget constructor like `_PrivateClass` or `Foo123`.
+  String parseClassName() {
+    final buffer = new StringBuffer();
+    if (isUpperCase(peek) || peek == $underscore) {
+      buffer.writeCharCode(peek);
+      consume();
+    } else {
+      throw new Exception(
+          'expected class name but found ${new String.fromCharCode(peek)}');
+    }
+    while (isDartCase(peek)) {
+      buffer.writeCharCode(peek);
+      consume();
+    }
+    return buffer.toString();
+  }
+
+  /// Parses the name of an html or polymer element like `div` or `my-element`
+  String parseElementName() {
+    final buffer = new StringBuffer();
+    if (isLowerCase(peek)) {
+      buffer.writeCharCode(peek);
+      consume();
+    } else {
+      throw new Exception('');
+    }
+    while (isXmlCase(peek)) {
+      buffer.writeCharCode(peek);
+      consume();
+    }
+    return buffer.toString();
+  }
+
+  void consumeWhitespace() {
+    while (!isDone() &&
+        (peek == $space || peek == $tab || peek == $lf || peek == $vt)) {
+      consume();
+    }
+  }
+
+  void expect(int char) {
+    if (peek != char) {
+      throw new Exception('Expected: ${new String.fromCharCode(char)} found '
+          '${new String.fromCharCode(peek)} at ${_index}');
+    }
+    consume();
+  }
+
+  void consume([int chars = 1]) {
+    _index += chars;
+  }
+
+  bool isDone() => _index >= _runes.length;
+
+  static bool isLetter(int char) =>
       (char >= 0x41 && char <= 0x5A) || (char >= 0x61 && char <= 0x7A);
 
-  bool _isNum(int char) => (char >= 0x30 && char <= 0x39);
+  static bool isNum(int char) => (char >= 0x30 && char <= 0x39);
+
+  static bool isUpperCase(int char) => (char >= 0x41 && char <= 0x5A);
+
+  static bool isLowerCase(int char) => (char >= 0x61 && char <= 0x7A);
+
+  static bool isDartCase(int char) =>
+      isNum(char) || isLetter(char) || char == $underscore;
+
+  static bool isXmlCase(int char) =>
+      isLetter(char) || isNum(char) || char == $dash || char == $underscore;
 }
 
+/// Node is the temporary AST structure.
+///
+/// All Fields are mutable for ease of use/performance.
+/// toString acts as a desugar.
 abstract class Node {
   String get name;
-  set name(String value);
 }
 
-class CtrNode extends Node {
+class Constructor extends Node {
+  bool isElement;
   String name;
-  final List<CtrArg> arguments = [];
-  final List<CtrNode> children = [];
-
-  CtrNode();
+  List<Argument> arguments = [];
+  List<Node> children = [];
 
   String toString() {
-    var start = name.codeUnitAt(0);
-    var prefix = (start >= 0x41 && start <= 0x5A) ? 'new $name' : '$name';
-    var argNodes = arguments.map((arg) => '$arg').join(',');
-    var childNodes = children.reversed.map((node) => '$node').join(",");
+    String nested;
     if (children.isEmpty) {
-      return '$prefix($argNodes)()';
+      nested = '';
+    } else if (children.length == 1 && children.first is Fragment) {
+      nested = '${children.first}';
+    } else {
+      nested = '[' + children.reversed.map((x) => '$x').join(', ') + ']';
     }
-    return '$prefix($argNodes)([$childNodes])';
+    // TODO(jonahwilliams): special arguments for node?
+    if (isElement) {
+      return 'element(\'$name\')($nested)';
+    }
+    final args = arguments.map((x) => '$x').join(', ');
+    return 'new $name($args)($nested)';
   }
 }
 
-class CtrArg extends Node {
+class Argument extends Node {
   String name;
   String value;
-  
-  CtrArg();
 
-  String toString() => '$name: $value';
+  String toString() => '$name:$value';
 }
 
-class TextNode extends Node {
-  String get name => 'text';
-  set name(String value) {}
+class Fragment extends Node {
+  String get name => 'fragment';
+  String value;
 
+  String toString() => value;
+}
+
+class Text extends Node {
+  String get name => 'text';
   String value;
 
   String toString() => 'text($value)';
-}
-
-
-void main(List<String> args) {
-  final parser = new Parser();
-  final fileName = args.single;
-  if (!fileName.endsWith('.dx.dart')) {
-    throw new Exception('Not an annotated DX file');
-  }
-  final source = new File(fileName).readAsStringSync();
-  final runes = source.runes.toList();
-  String modified = source;
-  Match match;
-  do {
-    match = new RegExp('new Dx\\(').firstMatch(modified);
-    if (match != null) {
-      var buffer = new StringBuffer();
-      var cur = match.start + 10;
-      while (true) {
-        if (runes[cur] == 0x27 && runes[cur+1] == 0x27 && runes[cur+2] == 0x27) {
-          break;
-        }
-        buffer.writeCharCode(runes[cur]);
-        cur++;
-      }
-      cur += 2;
-      print(buffer.toString());
-      modified = modified.replaceRange(match.start, cur+3, parser.parse(buffer.toString()));
-    }
-  } while (match != null);
-  
-  final newFileName = fileName.replaceFirst('.dx.dart', '.dart');
-  final result = new File(newFileName)..createSync();
-  result.writeAsStringSync(modified);
 }

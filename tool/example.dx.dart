@@ -1,24 +1,23 @@
 import 'package:butterfly/butterfly.dart';
 
-class Dx implements Node {
-  Dx(String _);
-
-  @override
-  Key get key => null;
-
-  @override
-  instantiate(_) {}
-}
-
 class FooWidget extends StatelessWidget {
   @override
   Node build() {
     var local = false;
-    return new Dx('''
-      <div>
-        ${"Some Text"}
-        <input checked=${local}></input>
-      </div>
+    var bar = 2;
+    var items = [1, 2, 3].map((x) => Dx('''"${x}"''')).toList();
+
+    return Dx('''
+      <MyComponent foo=${bar}>
+        "This is text"
+        <div></div>
+        <polymer-element/>
+        "SO IS THIS"
+        "${local}"
+        <NestedComponent>
+          ${items}
+        </NestedComponent>
+      </MyComponent>
     ''');
   }
 }
