@@ -1,8 +1,7 @@
 import 'dart:io';
 import 'parser.dart';
 
-/// This is a super hack, a real transpiler would at least use the analysis api to grab to string
-/// segments.
+/// TODO: Replace this with the analyzer API (unresovled types);
 void main(List<String> args) {
   final parser = new Parser();
   final fileName = args.single;

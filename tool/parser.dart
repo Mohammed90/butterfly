@@ -3,7 +3,7 @@ import 'package:quiver/core.dart';
 import 'package:quiver/collection.dart';
 
 /// A proof of concept rewriter for simple XML like expressions.
-/// 
+///
 /// Technically all of these methods should be private but I think
 /// underscores are ugly.
 ///
@@ -47,7 +47,6 @@ class Parser {
     _nodes = <Ast>[];
     _runes = source.runes.toList();
     _index = 0;
-    consumeWhitespace();
     while (true) {
       consumeWhitespace();
       if (isDone()) {
@@ -240,17 +239,17 @@ class Parser {
   static bool isLetter(int char) =>
       (char >= 0x41 && char <= 0x5A) || (char >= 0x61 && char <= 0x7A);
 
-  static bool isNum(int char) => (char >= 0x30 && char <= 0x39);
+  static bool isDigit(int char) => (char >= 0x30 && char <= 0x39);
 
   static bool isUpperCase(int char) => (char >= 0x41 && char <= 0x5A);
 
   static bool isLowerCase(int char) => (char >= 0x61 && char <= 0x7A);
 
   static bool isDartCase(int char) =>
-      isNum(char) || isLetter(char) || char == $underscore;
+      isDigit(char) || isLetter(char) || char == $underscore;
 
   static bool isXmlCase(int char) =>
-      isLetter(char) || isNum(char) || char == $dash || char == $underscore;
+      isLetter(char) || isDigit(char) || char == $dash || char == $underscore;
 }
 
 /// Base class for Dart Extension's heterogeneous Ast.
