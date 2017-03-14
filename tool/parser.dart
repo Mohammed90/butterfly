@@ -1,7 +1,11 @@
 import 'package:charcode/charcode.dart';
+import 'package:quiver/core.dart';
+import 'package:quiver/collection.dart';
 
 /// A proof of concept rewriter for simple XML like expressions.
-///
+/// 
+/// Technically all of these methods should be private but I think
+/// underscores are ugly.
 ///
 ///     new Dx('<div>${_foo}</div>'); =>
 ///       new div()([_foo]);
@@ -18,19 +22,19 @@ import 'package:charcode/charcode.dart';
 ///
 ///      new Dx('''
 ///        <div>
-///           "This is a text node"
-///           "${localTextNode}"
+///           "This is a text Ast"
+///           "${localTextAst}"
 ///        </div>
 ///      '''); =>
 ///
-///      div()([text("this is a text node"), text(localTextNode)])
+///      div()([text("this is a text Ast"), text(localTextAst)])
 ///
 ///      new Dx('<my-element></my-element>'); =>
 ///
 ///      new Element('my-element')();
 ///
 class Parser {
-  List<Node> _nodes;
+  List<Ast> _nodes;
   List<int> _runes;
   int _index;
 
@@ -38,8 +42,9 @@ class Parser {
 
   int get peek => _runes[_index];
 
-  String parse(String source) {
-    _nodes = <Node>[];
+  /// Parses the given dart extension (dx) fragment into dart code.
+  Ast parse(String source) {
+    _nodes = <Ast>[];
     _runes = source.runes.toList();
     _index = 0;
     consumeWhitespace();
@@ -63,10 +68,10 @@ class Parser {
           throw new Exception('Illegal char: ${new String.fromCharCode(peek)}');
       }
     }
-    return ' ${_nodes.single}';
+    return _nodes.single;
   }
 
-  /// Parses "......" into a text node.
+  /// Parses "......" into a text Ast.
   void parseText() {
     final buffer = <int>[$double_quote];
     expect($double_quote);
@@ -76,11 +81,10 @@ class Parser {
     }
     expect($double_quote);
     buffer.add($double_quote);
-    _nodes.add(new Text()..value = new String.fromCharCodes(buffer));
+    _nodes.add(new Text(new String.fromCharCodes(buffer)));
   }
 
-  /// Parses ${...} into a fragment which is assumed to be either
-  /// a node or a list of nodes.
+  /// Parses `${...}` into a fragment.
   void parseFragment() {
     final buffer = <int>[];
     expect($dollar);
@@ -90,35 +94,40 @@ class Parser {
       consume();
     }
     expect($close_brace);
-    _nodes.add(new Fragment()..value = new String.fromCharCodes(buffer));
+    _nodes.add(new Fragment(new String.fromCharCodes(buffer)));
   }
 
-  /// Parsers the start of `<` or `</`
+  /// Parsers the start of an element.
+  ///
+  ///  `<` and `</`
+  ///
   void parseElement() {
     if (peek == $slash) {
       consume();
-      parseClosingNode();
+      parseClosingAst();
     } else {
-      parseOpeningNode();
+      parseOpeningAst();
     }
   }
 
-  /// Parses the name of an opening element `<my-element` or `<MyClass`
-  void parseOpeningNode() {
+  /// Parses the name of an opening element
+  ///
+  ///     `<my-element` or `<MyClass`
+  ///       ^^^^^^^^^^       ^^^^^^^
+  void parseOpeningAst() {
     consumeWhitespace();
     if (isLowerCase(peek)) {
-      _nodes.add(new Constructor()
-        ..name = parseElementName()
-        ..isElement = true);
+      _nodes.add(new Node.element(parseElementName()));
     } else {
-      _nodes.add(new Constructor()
-        ..name = parseClassName()
-        ..isElement = false);
+      _nodes.add(new Node.constructor(parseClassName()));
     }
     parseArguments();
   }
 
-  /// Parses the attributes of an xml node into [Argument]
+  /// Parses the attributes of an XML node into an [Argument]
+  ///
+  ///     <div foo=${bar} fizz=${buzz}
+  ///          ^^^^^^^^^  ^^^^^^^^^^^^
   void parseArguments() {
     while (true) {
       consumeWhitespace();
@@ -145,30 +154,33 @@ class Parser {
           consume();
         }
         expect($close_brace);
-        (_nodes.last as Constructor).arguments.add(new Argument()
-          ..name = new String.fromCharCodes(name)
-          ..value = new String.fromCharCodes(value));
+        (_nodes.last as Node).arguments.add(new Argument(
+            new String.fromCharCodes(name), new String.fromCharCodes(value)));
       }
     }
   }
 
-  void parseClosingNode() {
+  /// Parses a closing node and collects Ast nodes into their parents.
+  ///
+  ///     </div>
+  ///       ^^^
+  void parseClosingAst() {
     final name = isLowerCase(peek) ? parseElementName() : parseClassName();
     consumeWhitespace();
     expect($close_angle);
-    final parent = _nodes.lastWhere((node) => node.name == name);
-    Node removed;
+    final parent = _nodes.lastWhere((Ast) => Ast.name == name);
+    Ast removed;
     do {
       removed = _nodes.removeLast();
       if (parent != removed) {
-        parent.children.add(removed);
+        (parent as Node).children.insert(0, removed);
       } else {
         _nodes.add(parent);
       }
     } while (removed != parent);
   }
 
-  /// Parses the name of a widget constructor like `_PrivateClass` or `Foo123`.
+  /// Parses the name of a widget Node like `_PrivateClass` or `Foo123`.
   String parseClassName() {
     final buffer = new StringBuffer();
     if (isUpperCase(peek) || peek == $underscore) {
@@ -201,6 +213,7 @@ class Parser {
     return buffer.toString();
   }
 
+  /// Consumes whitespace elements.
   void consumeWhitespace() {
     while (!isDone() &&
         (peek == $space || peek == $tab || peek == $lf || peek == $vt)) {
@@ -208,6 +221,7 @@ class Parser {
     }
   }
 
+  /// Consumes the given char, or throws if it is not found.
   void expect(int char) {
     if (peek != char) {
       throw new Exception('Expected: ${new String.fromCharCode(char)} found '
@@ -216,6 +230,7 @@ class Parser {
     consume();
   }
 
+  /// Moves the index forward.
   void consume([int chars = 1]) {
     _index += chars;
   }
@@ -238,55 +253,126 @@ class Parser {
       isLetter(char) || isNum(char) || char == $dash || char == $underscore;
 }
 
-/// Node is the temporary AST structure.
-///
-/// All Fields are mutable for ease of use/performance.
-/// toString acts as a desugar.
-abstract class Node {
+/// Base class for Dart Extension's heterogeneous Ast.
+abstract class Ast {
+  /// The name of the node instance.
   String get name;
+
+  const Ast();
+
+  /// Produces regular Dart code from the Dart Extension AST.
+  String toSource();
 }
 
-class Constructor extends Node {
-  bool isElement;
-  String name;
-  List<Argument> arguments = [];
-  List<Node> children = [];
+/// A Node, with either element or constructor semantics.
+class Node extends Ast {
+  final bool isElement;
+  final String name;
+  final List<Argument> arguments;
+  final List<Ast> children;
 
-  String toString() {
+  const Node(this.name, this.isElement, this.arguments, this.children);
+
+  Node.element(this.name)
+      : isElement = true,
+        arguments = <Argument>[],
+        children = <Ast>[];
+
+  Node.constructor(this.name)
+      : isElement = false,
+        arguments = <Argument>[],
+        children = <Ast>[];
+
+  @override
+  String toSource() {
     String nested;
+    final args = arguments.map((x) => '$x').join(', ');
     if (children.isEmpty) {
       nested = '';
     } else if (children.length == 1 && children.first is Fragment) {
       nested = '${children.first}';
     } else {
-      nested = '[' + children.reversed.map((x) => '$x').join(', ') + ']';
+      nested = '[' + children.map((x) => '$x').join(', ') + ']';
     }
-    // TODO(jonahwilliams): special arguments for node?
     if (isElement) {
-      return 'element(\'$name\')($nested)';
+      return 'element(\'$name\'${args.isNotEmpty ? ", " : ""}$args)($nested)';
     }
-    final args = arguments.map((x) => '$x').join(', ');
     return 'new $name($args)($nested)';
   }
+
+  @override
+  String toString() => '<Node:$name:$arguments:$children>';
+
+  @override
+  bool operator ==(Object other) =>
+      other is Node &&
+      other.isElement == isElement &&
+      other.name == name &&
+      listsEqual(other.arguments, arguments) &&
+      listsEqual(other.children, children);
+
+  @override
+  int get hashCode =>
+      hash4(isElement, name, hashObjects(arguments), hashObjects(children));
 }
 
-class Argument extends Node {
-  String name;
-  String value;
+/// Represents an XML attribute mapped to a named argument.
+class Argument extends Ast {
+  final String name;
+  final String value;
 
-  String toString() => '$name:$value';
+  const Argument(this.name, this.value);
+
+  @override
+  String toString() => '<Argument:$name:$value>';
+
+  @override
+  String toSource() => '$name:$value';
+
+  @override
+  bool operator ==(Object other) =>
+      other is Argument && other.name == name && other.value == value;
+
+  @override
+  int get hashCode => hash2(name, value);
 }
 
-class Fragment extends Node {
+/// Represents an inline fragment, usually a variable passed as a child.
+class Fragment extends Ast {
   String get name => 'fragment';
-  String value;
+  final String value;
 
-  String toString() => value;
+  const Fragment(this.value);
+
+  @override
+  String toString() => '<Fragment:$value>';
+
+  @override
+  String toSource() => value;
+
+  @override
+  bool operator ==(Object other) => other is Fragment && other.value == value;
+
+  @override
+  int get hashCode => name.hashCode;
 }
 
-class Text extends Node {
+/// A text literal Ast
+class Text extends Ast {
   String get name => 'text';
-  String value;
+  final String value;
 
-  String toString() => 'text($value)';
+  const Text(this.value);
+
+  @override
+  String toString() => '<Text:$value>';
+
+  @override
+  String toSource() => 'text($value)';
+
+  @override
+  bool operator ==(Object other) => other is Text && other.value == value;
+
+  @override
+  int get hashCode => value.hashCode;
 }

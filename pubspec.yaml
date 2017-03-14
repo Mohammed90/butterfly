@@ -14,6 +14,7 @@ dependencies:
 dev_dependencies:
   test: '>=0.12.0 <1.0.0'
   charcode:
+  quiver:
 
 transformers:
 - $dart2js:

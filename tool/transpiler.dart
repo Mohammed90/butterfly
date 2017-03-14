@@ -1,7 +1,6 @@
 import 'dart:io';
 import 'parser.dart';
 
-
 /// This is a super hack, a real transpiler would at least use the analysis api to grab to string
 /// segments.
 void main(List<String> args) {
@@ -19,8 +18,8 @@ void main(List<String> args) {
       break;
     }
     final code = modified.substring(match.start + 7, match.end - 4);
-    modified =
-        modified.replaceRange(match.start, match.end, parser.parse(code));
+    modified = modified.replaceRange(
+        match.start, match.end, ' ${parser.parse(code).toSource()};');
   }
 
   final newFileName = fileName.replaceFirst('.dx.dart', '.dart');
